@@ -139,13 +139,7 @@ function appendUser(text) {
   scrollBottom();
 }
 
-function appendAssistant(text, citations) {
-  const div = document.createElement('div');
-  div.className = 'msg assistant';
-  const content = document.createElement('div');
-  content.innerHTML = renderMarkdown(text);
-  div.appendChild(content);
-
+function appendCitations(div, citations) {
   (citations || []).forEach(c => {
     const det = document.createElement('details');
     det.className = 'citation';
@@ -159,7 +153,15 @@ function appendAssistant(text, citations) {
     det.appendChild(txt);
     div.appendChild(det);
   });
+}
 
+function appendAssistant(text, citations) {
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  const content = document.createElement('div');
+  content.innerHTML = renderMarkdown(text);
+  div.appendChild(content);
+  appendCitations(div, citations);
   messagesEl.appendChild(div);
   scrollBottom();
 }
@@ -180,26 +182,64 @@ async function sendMessage() {
   appendUser(q);
   questionEl.value = '';
   sendBtn.disabled = true;
-  const loading = appendLoading();
+
+  // 创建助手气泡，先显示"思考中"
+  const bubble = document.createElement('div');
+  bubble.className = 'msg assistant';
+  const content = document.createElement('div');
+  content.textContent = '思考中…';
+  bubble.appendChild(content);
+  messagesEl.appendChild(bubble);
+  scrollBottom();
+
+  let answerText = '';
+  const handleBlock = (block) => {
+    const lines = block.split('\n').filter(l => l.startsWith('data:'));
+    if (!lines.length) return;
+    const data = lines.map(l => l.slice(5).trim()).join('\n');
+    if (!data || data === '[DONE]') return;
+    let ev;
+    try { ev = JSON.parse(data); } catch (e) { return; }
+    if (ev.type === 'delta') {
+      answerText += ev.content || '';
+      content.textContent = answerText;
+      scrollBottom();
+    } else if (ev.type === 'done') {
+      sessionId = ev.sessionId;
+      sessionInfoEl.textContent = '会话 ID: ' + sessionId;
+      content.innerHTML = renderMarkdown(answerText);
+      appendCitations(bubble, ev.citations);
+      loadSessions();
+    } else if (ev.type === 'error') {
+      content.textContent = '出错了：' + ev.message;
+    }
+  };
+
   try {
-    const res = await fetch('/api/chat', {
+    const res = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId, question: q })
     });
-    const data = await res.json();
-    if (data.code === 200) {
-      sessionId = data.data.sessionId;
-      sessionInfoEl.textContent = '会话 ID: ' + sessionId;
-      appendAssistant(data.data.answer, data.data.citations);
-      loadSessions();
-    } else {
-      appendAssistant('出错了：' + data.message);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        handleBlock(block);
+      }
     }
+    if (buffer.trim()) handleBlock(buffer.trim());
   } catch (e) {
-    appendAssistant('请求失败：' + e.message);
+    content.textContent = '请求失败：' + e.message;
   } finally {
-    loading.remove();
     sendBtn.disabled = false;
   }
 }

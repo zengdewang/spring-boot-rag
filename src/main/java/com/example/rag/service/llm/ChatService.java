@@ -12,10 +12,14 @@ import com.example.rag.service.chat.ChatCacheService;
 import com.example.rag.service.chat.ChatRecordService;
 import com.example.rag.service.embedding.EmbeddingService;
 import com.example.rag.service.vector.MilvusVectorStore;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.milvus.v2.service.vector.response.SearchResp.SearchResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +29,9 @@ import java.util.stream.Collectors;
 /**
  * RAG 问答核心服务：
  * （单轮走缓存）问题向量化 → Milvus 检索 TopK → 拼接多轮历史 → 组装 Prompt → DeepSeek 生成 → 保存记录 → 返回答案 + 引用。
+ * 支持非流式（answer）与流式（streamAnswer）。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ChatService {
@@ -39,6 +45,7 @@ public class ChatService {
     private final DocumentMapper documentMapper;
     private final ChatRecordService chatRecordService;
     private final ChatCacheService chatCacheService;
+    private final ObjectMapper objectMapper;
 
     public ChatResponse answer(ChatRequest request) {
         // 未传 sessionId 视为单轮查询：可走缓存；多轮问题依赖上下文，不缓存
@@ -84,6 +91,49 @@ public class ChatService {
             chatCacheService.put(request.getQuestion(), response);
         }
         return response;
+    }
+
+    /**
+     * 流式问答：RAG 检索后走 DeepSeek 流式生成，增量推送给 SSE。
+     */
+    public void streamAnswer(ChatRequest request, SseEmitter emitter) {
+        try {
+            // 单轮问题走缓存（与 answer 一致）；此处不重复实现缓存命中转发
+            boolean standalone = request.getSessionId() == null || request.getSessionId().isBlank();
+            String sessionId = standalone ? UUID.randomUUID().toString() : request.getSessionId();
+
+            List<Float> queryVector = embeddingService.embed(request.getQuestion());
+            List<SearchResult> results = milvusVectorStore.search(queryVector, TOP_K);
+            List<Citation> citations = buildCitations(results);
+            List<ChatRecordDTO> history = chatRecordService.recentHistory(sessionId, HISTORY_LIMIT);
+            List<ChatMessage> messages = buildMessages(request.getQuestion(), citations, history);
+
+            StringBuilder answer = new StringBuilder();
+            deepSeekClient.streamChat(messages, delta -> {
+                answer.append(delta);
+                sendEvent(emitter, Map.of("type", "delta", "content", delta));
+            });
+
+            chatRecordService.save(sessionId, request.getQuestion(), answer.toString(), citations);
+            sendEvent(emitter, Map.of("type", "done", "sessionId", sessionId, "citations", citations));
+            emitter.complete();
+        } catch (Exception e) {
+            log.error("流式问答失败", e);
+            try {
+                sendEvent(emitter, Map.of("type", "error", "message", e.getMessage()));
+            } catch (Exception ignored) {
+                // 客户端可能已断开
+            }
+            emitter.complete();
+        }
+    }
+
+    private void sendEvent(SseEmitter emitter, Map<String, Object> data) {
+        try {
+            emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(data)));
+        } catch (IOException e) {
+            throw new RuntimeException("SSE 推送失败", e);
+        }
     }
 
     private List<Citation> buildCitations(List<SearchResult> results) {
