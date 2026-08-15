@@ -8,6 +8,7 @@ import com.example.rag.dto.ChatResponse;
 import com.example.rag.dto.Citation;
 import com.example.rag.entity.Document;
 import com.example.rag.mapper.DocumentMapper;
+import com.example.rag.service.chat.ChatCacheService;
 import com.example.rag.service.chat.ChatRecordService;
 import com.example.rag.service.embedding.EmbeddingService;
 import com.example.rag.service.vector.MilvusVectorStore;
@@ -23,7 +24,7 @@ import java.util.stream.Collectors;
 
 /**
  * RAG 问答核心服务：
- * 问题向量化 → Milvus 检索 TopK → 拼接多轮历史 → 组装 Prompt → DeepSeek 生成 → 保存记录 → 返回答案 + 引用。
+ * （单轮走缓存）问题向量化 → Milvus 检索 TopK → 拼接多轮历史 → 组装 Prompt → DeepSeek 生成 → 保存记录 → 返回答案 + 引用。
  */
 @Service
 @RequiredArgsConstructor
@@ -37,12 +38,21 @@ public class ChatService {
     private final DeepSeekClient deepSeekClient;
     private final DocumentMapper documentMapper;
     private final ChatRecordService chatRecordService;
+    private final ChatCacheService chatCacheService;
 
     public ChatResponse answer(ChatRequest request) {
-        // 会话 ID：未传则自动生成并返回给客户端
-        String sessionId = (request.getSessionId() == null || request.getSessionId().isBlank())
-                ? UUID.randomUUID().toString()
-                : request.getSessionId();
+        // 未传 sessionId 视为单轮查询：可走缓存；多轮问题依赖上下文，不缓存
+        boolean standalone = request.getSessionId() == null || request.getSessionId().isBlank();
+        String sessionId = standalone ? UUID.randomUUID().toString() : request.getSessionId();
+
+        // 0. 单轮高频问题：优先查缓存，命中则直接返回（跳过向量化/检索/大模型）
+        if (standalone) {
+            ChatResponse cached = chatCacheService.get(request.getQuestion());
+            if (cached != null) {
+                cached.setSessionId(sessionId);
+                return cached;
+            }
+        }
 
         // 1. 问题向量化
         List<Float> queryVector = embeddingService.embed(request.getQuestion());
@@ -68,6 +78,11 @@ public class ChatService {
         response.setSessionId(sessionId);
         response.setAnswer(answer);
         response.setCitations(citations);
+
+        // 8. 单轮问题写入缓存
+        if (standalone) {
+            chatCacheService.put(request.getQuestion(), response);
+        }
         return response;
     }
 
