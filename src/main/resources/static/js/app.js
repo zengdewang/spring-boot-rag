@@ -6,6 +6,7 @@ const sendBtn = document.getElementById('sendBtn');
 const docFileEl = document.getElementById('docFile');
 const docListEl = document.getElementById('docList');
 const sessionInfoEl = document.getElementById('sessionInfo');
+const sessionListEl = document.getElementById('sessionList');
 
 /* ---------- 工具 ---------- */
 function escapeHtml(s) {
@@ -25,12 +26,108 @@ function scrollBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function fmtTime(t) {
+  if (!t) return '';
+  const d = new Date(t);
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function truncate(s, n) {
+  return s && s.length > n ? s.slice(0, n) + '…' : (s || '');
+}
+
 /* ---------- 会话 ---------- */
 function newSession() {
   sessionId = null;
   messagesEl.innerHTML = '';
   sessionInfoEl.textContent = '未创建会话（发送第一条消息后自动创建）';
+  loadSessions();
   loadDocs();
+}
+
+async function openSession(sid) {
+  sessionId = sid;
+  sessionInfoEl.textContent = '会话 ID: ' + sid;
+  messagesEl.innerHTML = '';
+  const loading = appendLoading();
+  try {
+    const res = await fetch('/api/chat/history/' + encodeURIComponent(sid));
+    const data = await res.json();
+    if (data.code === 200) {
+      (data.data || []).forEach(rec => {
+        appendUser(rec.question);
+        appendAssistant(rec.answer, rec.citations);
+      });
+    } else {
+      appendAssistant('加载历史失败：' + data.message);
+    }
+  } catch (e) {
+    appendAssistant('加载历史失败：' + e.message);
+  } finally {
+    loading.remove();
+    loadSessions();
+  }
+}
+
+async function loadSessions() {
+  try {
+    const res = await fetch('/api/chat/sessions');
+    const data = await res.json();
+    sessionListEl.innerHTML = '';
+    if (data.code === 200 && data.data.length) {
+      data.data.forEach(s => {
+        const li = document.createElement('li');
+        if (s.sessionId === sessionId) li.className = 'active-session';
+        li.style.cursor = 'pointer';
+
+        const left = document.createElement('div');
+        const q = document.createElement('div');
+        q.textContent = '📝 ' + truncate(s.lastQuestion, 18);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `${s.messageCount} 轮 · ${fmtTime(s.lastTime)}`;
+        left.appendChild(q);
+        left.appendChild(meta);
+
+        const del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '✕';
+        del.title = '删除会话';
+        del.onclick = (e) => {
+          e.stopPropagation();
+          deleteSession(s.sessionId);
+        };
+
+        li.appendChild(left);
+        li.appendChild(del);
+        li.onclick = () => openSession(s.sessionId);
+        sessionListEl.appendChild(li);
+      });
+    } else {
+      sessionListEl.innerHTML = '<li style="font-size:12px;color:#94a3b8;border:none">暂无历史会话</li>';
+    }
+  } catch (e) {
+    sessionListEl.innerHTML = '<li style="color:#ef4444;border:none">加载会话失败</li>';
+  }
+}
+
+async function deleteSession(sid) {
+  if (!confirm('确认删除该会话的全部对话记录？')) return;
+  try {
+    const res = await fetch('/api/chat/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
+    if (res.ok) {
+      if (sid === sessionId) {
+        newSession();
+      } else {
+        loadSessions();
+      }
+    } else {
+      alert('删除失败');
+    }
+  } catch (e) {
+    alert('删除失败：' + e.message);
+  }
 }
 
 /* ---------- 消息渲染 ---------- */
@@ -95,6 +192,7 @@ async function sendMessage() {
       sessionId = data.data.sessionId;
       sessionInfoEl.textContent = '会话 ID: ' + sessionId;
       appendAssistant(data.data.answer, data.data.citations);
+      loadSessions();
     } else {
       appendAssistant('出错了：' + data.message);
     }

@@ -3,6 +3,7 @@ package com.example.rag.service.chat;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.example.rag.dto.ChatRecordDTO;
 import com.example.rag.dto.Citation;
+import com.example.rag.dto.SessionSummary;
 import com.example.rag.entity.ChatRecord;
 import com.example.rag.mapper.ChatRecordMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -46,6 +47,17 @@ public class ChatRecordService {
                         .last("LIMIT " + limit));
         Collections.reverse(records);
         return records.stream().map(this::toDTO).toList();
+    }
+
+    /** 会话列表（按最近活跃排序，含轮数与最后问题预览） */
+    public List<SessionSummary> listSessions() {
+        return chatRecordMapper.listSessionSummaries();
+    }
+
+    /** 删除整个会话的历史记录 */
+    public void deleteSession(String sessionId) {
+        chatRecordMapper.delete(Wrappers.<ChatRecord>lambdaQuery()
+                .eq(ChatRecord::getSessionId, sessionId));
     }
 
     private ChatRecordDTO toDTO(ChatRecord record) {

@@ -80,6 +80,10 @@ body {
   padding: 0 4px;
 }
 .doc-list .del:hover { color: #b91c1c; }
+.doc-list li.active-session {
+  border-color: var(--accent);
+  background: #eef2ff;
+}
 
 .btn-secondary {
   width: 100%;
