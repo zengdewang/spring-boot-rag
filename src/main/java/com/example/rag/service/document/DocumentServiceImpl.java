@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.example.rag.common.exception.BusinessException;
 import com.example.rag.entity.Document;
 import com.example.rag.mapper.DocumentMapper;
+import com.example.rag.service.embedding.EmbeddingService;
+import com.example.rag.service.vector.MilvusVectorStore;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -16,6 +18,9 @@ public class DocumentServiceImpl implements DocumentService {
 
     private final DocumentMapper documentMapper;
     private final DocumentParser documentParser;
+    private final TextChunker textChunker;
+    private final EmbeddingService embeddingService;
+    private final MilvusVectorStore milvusVectorStore;
 
     @Override
     public Document upload(MultipartFile file) {
@@ -35,7 +40,20 @@ public class DocumentServiceImpl implements DocumentService {
         doc.setChunkCount(0);
         documentMapper.insert(doc);
 
-        // TODO Day 3：接入 分块 → Embedding → Milvus 入库 流水线
+        // 同步流水线：分块 → 向量化 → 入库 Milvus
+        try {
+            List<String> chunks = textChunker.chunk(content);
+            if (!chunks.isEmpty()) {
+                List<List<Float>> vectors = embeddingService.embedBatch(chunks);
+                milvusVectorStore.insert(doc.getId(), chunks, vectors);
+                doc.setChunkCount(chunks.size());
+                documentMapper.updateById(doc);
+            }
+        } catch (Exception e) {
+            // 流水线中途失败则回滚文档记录，避免脏数据
+            documentMapper.deleteById(doc.getId());
+            throw e;
+        }
         return doc;
     }
 
@@ -52,7 +70,11 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     public void delete(Long id) {
-        // TODO Day 3：同时删除 Milvus 中该文档对应的向量
+        Document doc = documentMapper.selectById(id);
+        if (doc == null) {
+            throw new BusinessException(404, "文档不存在");
+        }
+        milvusVectorStore.deleteByDocId(id);
         documentMapper.deleteById(id);
     }
 
