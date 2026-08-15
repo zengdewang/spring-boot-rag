@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG 知识库问答系统</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>📚 RAG 知识库问答系统</h1>
+  <span class="subtitle">Spring Boot 3 · MyBatis-Plus · Milvus · DeepSeek · BGE-M3</span>
+</header>
+<div class="layout">
+  <aside class="sidebar">
+    <section class="panel">
+      <h3>📄 文档管理</h3>
+      <label class="upload-btn">
+        <input type="file" id="docFile" accept=".txt,.md" hidden>
+        ⬆ 上传文档（txt / md）
+      </label>
+      <ul id="docList" class="doc-list"></ul>
+    </section>
+    <section class="panel">
+      <h3>💬 会话</h3>
+      <button id="newSessionBtn" class="btn-secondary">＋ 新会话</button>
+      <div class="session-info" id="sessionInfo">未创建会话</div>
+    </section>
+  </aside>
+  <main class="chat-area">
+    <div id="messages" class="messages"></div>
+    <div class="input-bar">
+      <textarea id="question" placeholder="输入你的问题，Enter 发送，Shift+Enter 换行" rows="2"></textarea>
+      <button id="sendBtn" class="btn-primary">发送</button>
+    </div>
+  </main>
+</div>
+<script src="/js/app.js"></script>
+</body>
+</html>
