@@ -1,0 +1,32 @@
+### Java ###
+*.class
+*.jar
+*.war
+*.nar
+hs_err_pid*
+replay_pid*
+
+### Maven ###
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+### VS Code ###
+.vscode/
+
+### 日志 ###
+logs/
+*.log
+
+### 敏感配置：本地密钥文件绝不上传 ###
+application-local.yml
+.env
+
+### Docker 本地数据卷（Milvus/MinIO/etcd 运行数据，绝不上传）###
+docker/volumes/
